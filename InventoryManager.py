@@ -2,10 +2,14 @@ import pdfreader
 import re
 import decimal
 import csv
+import os
+from lxml import etree
 
 csvFields = ["Index", "Quantity", "Part Number", "Manufacturer Part Number", "Description", "Customer Reference", "Backorder", "Unit Price", "Extended Price"]
+#settingsPath = "C:\\Users\\green\\PycharmProjects\\InventoryManager\\settings.xml"
 
 def main():
+    ParseSettings()
     fileName = "L:\\KiCad\\~Parts Inventory\\Order History\\Tayda\\Order # 1000369536.pdf"
     TaydaOrderCSVCreator(fileName)
 
@@ -18,6 +22,35 @@ class OrderedPart:
         self.qty = 0
         self.backorder = 0
         self.extendedPrice = 0.0
+
+def ParseSettings():
+    print(os.getcwd())
+    settingsPath = os.getcwd() + "\\settings.xml"
+    tree = etree.parse(settingsPath, etree.XMLParser(ns_clean=True, recover=True, remove_blank_text=True))
+    for oSettings in tree.xpath("//OrderSettings"):
+        for setting in oSettings.getchildren():
+            if setting.tag == "OrderWD":
+                orderWD = setting.text
+            elif setting.tag == "Suppliers":
+                suppliersList = []
+                for supplier in setting.getchildren():
+                    if supplier.tag == "Supplier":
+                        suppliersList.append(supplier.text)
+    for mSettings in tree.xpath("//MongoSettings"):
+        for setting in mSettings.getchildren():
+            if setting.tag == "MongoURL":
+                mongoURL = setting.text
+            elif setting.tag == "UserName":
+                mongoUserName = setting.text
+            elif setting.tag == "Password":
+                mongoPassword = setting.text
+
+    print("orderWD = %s" % orderWD)
+    print("suppliersList:")
+    print(suppliersList)
+    print("mongoURL = %s" % mongoURL)
+    print("mongoUserName = %s" % mongoUserName)
+    print("mongoPassword = %s" % mongoPassword)
 
 def TaydaOrderCSVCreator(fileName):
     # Open PDF and parse the strings in it
@@ -36,7 +69,7 @@ def TaydaOrderCSVCreator(fileName):
                 case "startOfTable":
                     # Subtotal is the last string before the 1st part's description
                     if string == "Subtotal":
-                        print("Start of Table Found")
+                        #print("Start of Table Found")
                         searchParameter = "partDescription"
                         orderedParts.append(OrderedPart())
                 case "partDescription":
