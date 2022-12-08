@@ -1,13 +1,13 @@
-<InventoryManager>
-	<OrderSettings>
-		<OrderWD>L:\KiCad\~Parts Inventory\Order History</OrderWD>
-		<Suppliers>
-			<Supplier>Digikey</Supplier>
-			<Supplier>Small Bear</Supplier>
-			<Supplier>Tayda</Supplier>
-		</Suppliers>
-	</OrderSettings>
-	<MongoSettings>
-		<MongoURL>mongodbURL</MongoURL>
-	</MongoSettings>
-</InventoryManager>
+<inventory_manager>
+	<order_settings>
+		<order_wd>L:\KiCad\~Parts Inventory\Order History</order_wd>
+		<suppliers>
+			<supplier>Digikey</supplier>
+			<supplier>Small Bear</supplier>
+			<supplier>Tayda</supplier>
+		</suppliers>
+	</order_settings>
+	<mongo_settings>
+		<mongo_url>mongodb_url</mongo_url>
+	</mongo_settings>
+</inventory_manager>
