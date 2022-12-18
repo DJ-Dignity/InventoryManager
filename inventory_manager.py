@@ -4,6 +4,8 @@ import decimal
 import csv
 import os
 from lxml import etree
+from lxml import html
+from pymongo import MongoClient
 
 # Global Variables
 # Settings variables
@@ -15,7 +17,7 @@ suppliers_list = [] # Contains list of suppliers who's receipts can be parsed
 mongo_settings = {} # Contains mongoURL, mongoUserName, and mongoPassword
 
 # Part variables
-# TODO: Change these to class(es)
+# TODO: Change these to databases
 # <partType>Optionals determines which indices in <partType>Parameters are optional and which must be found in the part description
 enclosure_styles = {"1590BB2": "1590BB2", "1590BB": "1590BB", "1590B": "1590B", "125B": "125B", "1590A": "1590A", "1590LB": "1590LB", "1590XX": "1590XX", "1590DD": "1590DD",
                    "1032L": "1032L"}
@@ -45,10 +47,12 @@ part_optionals = {"Enclosure": enclosure_optionals, "Switch": switch_optionals, 
 part_types = {"Enclosure": enclosure_parameters, "Switch": switch_parameters, "IC Socket": socket_parameters}
 
 def main():
+    # Gather settings from settings.xml
     parse_settings()
-    # TODO: Parse through Order History for each receipt
-    file_name = "L:\\KiCad\\~Parts Inventory\\Order History\\Tayda\\Order # 1000369536.pdf"
-    Tayda_order_csv_creator(file_name)
+    # Parse through the Order WD and create CSV's for PDF receipts as needed
+    create_csvs()
+    # Update MongoDB with new orders
+    update_db_orders()
     print("order_wd = %s" % order_settings["order_wd"])
     print("suppliers_list:")
     print(suppliers_list)
@@ -82,18 +86,34 @@ def parse_settings():
         for setting in m_settings.getchildren():
             if setting.tag == "mongo_url":
                 mongo_settings["mongo_url"] = setting.text
+                #mongo_settings["mongo_url"] = str(html.fromstring(setting.text))
             elif setting.tag == "username":
                 mongo_settings["mongo_username"] = setting.text
             elif setting.tag == "password":
                 mongo_settings["mongo_password"] = setting.text
 
+def create_csvs():
+    # Walk through the order work directory
+    for dir_name, dir_names, file_names in os.walk(order_settings["order_wd"]):
+        for supplier in suppliers_list:
+            if dir_name.endswith(supplier):
+                for file_name in file_names:
+                    if file_name.endswith(".pdf"):
+                        file_name_split = file_name.split(".")
+                        if file_name_split[0] + ".csv" not in file_names:
+                            match supplier:
+                                case "Tayda":
+                                    Tayda_order_csv_creator(os.path.join(dir_name, file_name))
+                                case "Small Bear":
+                                    Small_Bear_order_csv_creator(os.path.join(dir_name, file_name))
+                                case other:
+                                    print("Could not create CSV from PDF. Must be done manually. ")
+                        else:
+                            print("pdf found with csv conversion: %s" % os.path.join(dir_name, file_name))
+
 def Tayda_order_csv_creator(file_name):
     # Open PDF and parse the strings in it
-    fd = open(file_name, "rb")
-    viewer = pdfreader.SimplePDFViewer(fd)
-    page_strings = []
-    for canvas in viewer:
-        page_strings.append(canvas.strings)
+    page_strings = parse_pdf_strings(file_name)
     idx = 0
     #print("page_strings:")
     #print(page_strings)
@@ -153,6 +173,76 @@ def Tayda_order_csv_creator(file_name):
     for part in ordered_parts:
         print("\t" + part.part_description)
 
+    create_order_csv(file_name, ordered_parts)
+
+def Small_Bear_order_csv_creator(file_name):
+    # Open PDF and parse the strings in it
+    page_strings = parse_pdf_strings(file_name)
+    idx = 0
+    print("page_strings:")
+    print(page_strings)
+    for page in page_strings:
+        search_parameter = "start_of_table"
+        for string in page:
+            # Go through the page_strings and find each part
+            match search_parameter:
+                case "start_of_table":
+                    # String can be broken up, so also search without the t
+                    if string == "Total" or string == "otal":
+                        search_parameter = "qty"
+                        ordered_parts.append(OrderedPart())
+                case "qty":
+                    try:
+                        ordered_parts[idx].qty = int(string)
+                        search_parameter = "supplier_part_number"
+                    except:
+                        ordered_parts.pop()
+                        break
+                case "supplier_part_number":
+                    # Sometimes the supplier p/n is split into 2 lines; trying to use length to distinguish between that and the part description
+                    if len(string) <= 10:
+                        if ordered_parts[idx].supplier_part_number == "":
+                            ordered_parts[idx].supplier_part_number += string
+                        else:
+                            ordered_parts[idx].supplier_part_number += " " + string
+                    else:
+                        ordered_parts[idx].part_description += string
+                        search_parameter = "part_description"
+                case "part_description":
+                    # If we reach the unit price we've got the full description
+                    try:
+                        # Remove the $ and convert into a decimal with 2 sig figs
+                        float(string.replace("$", ""))
+                        ordered_parts[idx].unit_price = decimal.Decimal(re.sub(r'[^\d.]', "", string))
+                        search_parameter = "extended_price"
+                    except:
+                        ordered_parts[idx].part_description += " " + string
+                case "extended_price":
+                    # Remove the $ and convert into a decimal with 2 sig figs
+                    ordered_parts[idx].extended_price = decimal.Decimal(re.sub(r'[^\d.]', "", string))
+                    ordered_parts.append(OrderedPart())
+                    idx += 1
+                    search_parameter = "qty"
+
+        assign_part_number()
+        print("ordered_parts:")
+        print(ordered_parts)
+        for part in ordered_parts:
+            print("\t" + part.part_description)
+
+        create_order_csv(file_name, ordered_parts)
+
+
+def parse_pdf_strings(file_name):
+    # Open PDF and parse the strings in it
+    fd = open(file_name, "rb")
+    viewer = pdfreader.SimplePDFViewer(fd)
+    page_strings = []
+    for canvas in viewer:
+        page_strings.append(canvas.strings)
+    return page_strings
+
+def create_order_csv(file_name, ordered_parts):
     # Create CSV for order
     file_name_split = file_name.split(".")
     csv_name = file_name_split[0] + ".csv"
@@ -194,6 +284,49 @@ def assign_part_number():
         if not part_type_found:
             print(error_message[0] + part.part_description + error_message[1])
         print("Part number = %s" % part.part_number)
+
+def update_db_orders():
+    # Set up MongoDB connection
+    # TODO: lxml is removing the &w in the retryWrites section of the URL. Need to figure out why and stop it from doing that.
+    mongo_url = mongo_settings["mongo_url"]
+    print("mongo_url = %s" % mongo_url)
+    #mongo_url = "mongodb+srv://ngreenway:checksum@cluster0.7osjmnb.mongodb.net/?retryWrites=true&w=majority"
+    client = MongoClient(mongo_url)
+    db_names = client.list_database_names()
+    print("db_names:")
+    print(db_names)
+    if "inventory_manager" in db_names:
+        db = client.inventory_manager
+    else:
+        db = client["inventory_manager"]
+    db_names = client.list_database_names()
+    print("db_names:")
+    print(db_names)
+    coll_names = db.list_collection_names()
+    if "orders" in coll_names:
+        orders_coll = db.orders
+    else:
+        orders_coll = db["orders"]
+    # Walk through the order work directory
+    for dir_name, dir_names, file_names in os.walk(order_settings["order_wd"]):
+        for supplier in suppliers_list:
+            if dir_name.endswith(supplier):
+                for file_name in file_names:
+                    if file_name.endswith(".csv"):
+                        # Find the order number in the file name
+                        file_name_noext = file_name.replace(".csv", "")
+                        file_name_split = file_name_noext.split(" ")
+                        for word in file_name_split:
+                            try:
+                                int(word)
+                                print("Found CSV for order number %s in %s directory." % (word, supplier))
+                                #cursor = orders_coll.find({"order_number": int(word)})
+                                doc_exists = orders_coll.count_documents({"order_number": int(word)})
+                                if not doc_exists:
+                                    orders_coll.insert_one({"order_number": int(word)})
+                                break
+                            except:
+                                pass
 
 if __name__ == "__main__":
     main()
