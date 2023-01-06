@@ -1,10 +1,12 @@
-import pdfreader
 import re
 import decimal
 import csv
 import os
+import configparser
+import json
+
+import pdfreader
 from lxml import etree
-from lxml import html
 from pymongo import MongoClient
 
 # Global Variables
@@ -46,9 +48,22 @@ part_abbr = {"Enclosure": "ENC", "Switch": "SW", "IC Socket": "SOC", "Trimmer": 
 part_optionals = {"Enclosure": enclosure_optionals, "Switch": switch_optionals, "IC Socket": socket_optionals}
 part_types = {"Enclosure": enclosure_parameters, "Switch": switch_parameters, "IC Socket": socket_parameters}
 
+class OrderedPart:
+    def __init__(self):
+        self.part_description = ""
+        self.part_number = ""
+        self.supplier_part_number = ""
+        self.unit_price = 0.0
+        self.qty = 0
+        self.backorder = 0
+        self.extended_price = 0.0
+
+
 def main():
+    #config = configparser.ConfigParser()
     # Gather settings from settings.xml
-    parse_settings()
+    parse_settings_json()
+    #parse_settings_xml()
     # Parse through the Order WD and create CSV's for PDF receipts as needed
     create_csvs()
     # Update MongoDB with new orders
@@ -60,17 +75,8 @@ def main():
     print("mongo_username = %s" % mongo_settings["mongo_username"])
     print("mongo_password = %s" % mongo_settings["mongo_password"])
 
-class OrderedPart:
-    def __init__(self):
-        self.part_description = ""
-        self.part_number = ""
-        self.supplier_part_number = ""
-        self.unit_price = 0.0
-        self.qty = 0
-        self.backorder = 0
-        self.extended_price = 0.0
 
-def parse_settings():
+def parse_settings_xml():
     print(os.getcwd())
     settings_path = os.getcwd() + "\\settings.xml"
     tree = etree.parse(settings_path, etree.XMLParser(ns_clean=True, recover=True, remove_blank_text=True))
@@ -92,16 +98,37 @@ def parse_settings():
             elif setting.tag == "password":
                 mongo_settings["mongo_password"] = setting.text
 
+
+def parse_settings_json():
+    settings_path = os.getcwd() + "\\settings.json"
+    with open(settings_path, "r") as read_file:
+        settings = json.load(read_file)
+        print("settings:")
+        print(settings)
+        order_settings["order_wd"] = settings["order_settings"]["order_wd"]
+        print("suppliers for json:")
+        print(settings["order_settings"]["suppliers"])
+        for supplier in settings["order_settings"]["suppliers"]:
+            suppliers_list.append(supplier)
+        mongo_settings["mongo_url"] = settings["mongo_settings"]["mongo_url"]
+        mongo_settings["mongo_username"] = settings["mongo_settings"]["username"]
+        mongo_settings["mongo_password"] = settings["mongo_settings"]["password"]
+        mongo_settings["project_id"] = settings["mongo_settings"]["project_id"]
+
+
 def create_csvs():
     # Walk through the order work directory
     for dir_name, dir_names, file_names in os.walk(order_settings["order_wd"]):
         for supplier in suppliers_list:
             if dir_name.endswith(supplier):
                 for file_name in file_names:
+                    print("file_name: %s" % file_name)
                     if file_name.endswith(".pdf"):
                         file_name_split = file_name.split(".")
                         if file_name_split[0] + ".csv" not in file_names:
                             match supplier:
+                                case "Digikey":
+                                    Digikey_order_parsing(os.path.join(dir_name, file_name))
                                 case "Tayda":
                                     Tayda_order_csv_creator(os.path.join(dir_name, file_name))
                                 case "Small Bear":
@@ -110,6 +137,7 @@ def create_csvs():
                                     print("Could not create CSV from PDF. Must be done manually. ")
                         else:
                             print("pdf found with csv conversion: %s" % os.path.join(dir_name, file_name))
+
 
 def Tayda_order_csv_creator(file_name):
     # Open PDF and parse the strings in it
@@ -175,6 +203,7 @@ def Tayda_order_csv_creator(file_name):
 
     create_order_csv(file_name, ordered_parts)
 
+
 def Small_Bear_order_csv_creator(file_name):
     # Open PDF and parse the strings in it
     page_strings = parse_pdf_strings(file_name)
@@ -233,6 +262,66 @@ def Small_Bear_order_csv_creator(file_name):
         create_order_csv(file_name, ordered_parts)
 
 
+def Digikey_order_parsing(file_name):
+    # Open PDF and parse the strings in it
+    page_strings = parse_pdf_strings(file_name)
+    idx = 0
+    print("page_strings:")
+    print(page_strings)
+    for page in page_strings:
+        search_parameter = "date"
+        order_date = ""
+        order_no = ""
+        invoice_no = ""
+        start_of_doc_date_found = False
+        end_of_doc_date_found = False
+        start_of_pack_list_found = False
+        end_of_pack_list_found = False
+        start_of_zip_found = False
+        end_of_zip_found = False
+        for string in page:
+            # Go through the page string and find needed information
+            match search_parameter:
+                case "date":
+                    if end_of_doc_date_found:
+                        if string.endswith("/"):
+                            order_date += string[:-1]
+                            print("order_date: %s" % order_date)
+                            search_parameter = "order_no"
+                        else:
+                            order_date += string
+                    elif start_of_doc_date_found and string == ":":
+                        end_of_doc_date_found = True
+                    elif string == "Docu":
+                        start_of_doc_date_found = True
+                case "order_no":
+                    if end_of_pack_list_found:
+                        try:
+                            int(string)
+                            order_no += string
+                        except:
+                            print("order_no: %s" % order_no)
+                            search_parameter = "invoice_no"
+                    elif start_of_pack_list_found and string == ":":
+                        end_of_pack_list_found = True
+                    elif string == "Pack":
+                        start_of_pack_list_found = True
+                case "invoice_no":
+                    if end_of_zip_found and string != "USA":
+                        try:
+                            int(string)
+                            invoice_no += string
+                        except:
+                            print("invoice_no: %s" % invoice_no)
+                            break
+                    elif start_of_zip_found and string == "77":
+                        end_of_zip_found = True
+                    elif string == "5670":
+                        start_of_zip_found = True
+
+    return invoice_no, order_no, order_date
+
+
 def parse_pdf_strings(file_name):
     # Open PDF and parse the strings in it
     fd = open(file_name, "rb")
@@ -241,6 +330,7 @@ def parse_pdf_strings(file_name):
     for canvas in viewer:
         page_strings.append(canvas.strings)
     return page_strings
+
 
 def create_order_csv(file_name, ordered_parts):
     # Create CSV for order
@@ -252,6 +342,7 @@ def create_order_csv(file_name, ordered_parts):
         idx = 1
         for part in ordered_parts:
             writer.writerow([idx, part.qty, part.supplier_part_number, "", part.part_description, "", part.backorder, part.unit_price, part.extended_price])
+
 
 def assign_part_number():
     error_message = ["An issue occured when attempting to create a part number for ", ". Please enter the part number manually."] # Print this if a reference can't be found
@@ -285,9 +376,11 @@ def assign_part_number():
             print(error_message[0] + part.part_description + error_message[1])
         print("Part number = %s" % part.part_number)
 
+
 def update_db_orders():
     # Set up MongoDB connection
     # TODO: lxml is removing the &w in the retryWrites section of the URL. Need to figure out why and stop it from doing that.
+    # TODO: Maybe change to JSON or ini?
     mongo_url = mongo_settings["mongo_url"]
     print("mongo_url = %s" % mongo_url)
     #mongo_url = "mongodb+srv://ngreenway:checksum@cluster0.7osjmnb.mongodb.net/?retryWrites=true&w=majority"
@@ -327,6 +420,7 @@ def update_db_orders():
                                 break
                             except:
                                 pass
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,12 @@
+{
+	"order_settings": {
+		"order_wd": "L:\\KiCad\\~Parts Inventory\\Order History",
+		"suppliers": [ "Digikey", "Small Bear", "Tayda" ]
+	},
+	"mongo_settings": {
+		"mongo_url": "mongodb+srv://ngreenway:checksum@cluster0.7osjmnb.mongodb.net/?retryWrites=true&w=majority",
+		"username": "ngreenway",
+		"password": "checksum",
+		"project_id": "63856c068a780053ad1618e8"
+	}	
+}
