@@ -5,7 +5,6 @@ import os
 import json
 
 import pdfreader
-from lxml import etree
 from pymongo import MongoClient
 
 
