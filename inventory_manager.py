@@ -26,7 +26,6 @@ Things that still need to be implemented:
 # TODO: Put csv_fields into settings.json; put empty lists/dicts into main (get rid of for global variables)
 # Settings variables
 csv_fields = ["Index", "Quantity", "Part Number", "Manufacturer Part Number", "Description", "Customer Reference", "Backorder", "Unit Price", "Extended Price"]
-#settingsPath = "C:\\Users\\green\\PycharmProjects\\InventoryManager\\settings.xml"
 #ordered_parts = []
 order_settings = {}  # Contains orderWD
 suppliers_list = [] # Contains list of suppliers who's receipts can be parsed
@@ -76,38 +75,12 @@ class OrderedPart:
 
 
 def main():
-    #config = configparser.ConfigParser()
-    # Gather settings from settings.xml
+    # Gather settings from settings.json
     parse_settings_json()
-    #parse_settings_xml()
     # Parse through the Order WD and create CSV's for PDF receipts as needed
     create_csvs()
-    #create_csvs_and_update_mongodb()
     # Update MongoDB with new orders
     update_db_orders()
-
-
-def parse_settings_xml():
-    print(os.getcwd())
-    settings_path = os.getcwd() + "\\settings.xml"
-    tree = etree.parse(settings_path, etree.XMLParser(ns_clean=True, recover=True, remove_blank_text=True))
-    for o_settings in tree.xpath("//order_settings"):
-        for setting in o_settings.getchildren():
-            if setting.tag == "order_wd":
-                order_settings["order_wd"] = setting.text
-            elif setting.tag == "suppliers":
-                for supplier in setting.getchildren():
-                    if supplier.tag == "supplier":
-                        suppliers_list.append(supplier.text)
-    for m_settings in tree.xpath("//mongo_settings"):
-        for setting in m_settings.getchildren():
-            if setting.tag == "mongo_url":
-                mongo_settings["mongo_url"] = setting.text
-                #mongo_settings["mongo_url"] = str(html.fromstring(setting.text))
-            elif setting.tag == "username":
-                mongo_settings["mongo_username"] = setting.text
-            elif setting.tag == "password":
-                mongo_settings["mongo_password"] = setting.text
 
 
 def parse_settings_json():
